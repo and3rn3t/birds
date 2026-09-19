@@ -27,7 +27,12 @@ from PIL import Image
 from .languages import Namer
 from .names import drawable_keys, image_for, normalize, perches_for, resolve
 from .picks import Picks
-from .render.collage import gather_entries, render_collage, selected_species
+from .render.collage import (
+    gather_entries,
+    regions as collage_regions,
+    render_collage,
+    selected_species,
+)
 from .render.page import day_ordinal
 from .render.plate import effective_margin, render_plate
 from .source import Source, Species
@@ -107,6 +112,8 @@ class Mode:
     key: Callable[[Context], tuple]
     # The species this page is about, for the admin listing.
     subjects: Callable[[Context], list[str]]
+    # Where each of them landed, for the kiosk's hover (#54). Output pixels.
+    regions: Callable[[Context], list[tuple[str, tuple[int, int, int, int]]]]
     # Driven by the lookback window: the admin offers the setting, and the loop
     # prunes artwork picks to it.
     windowed: bool = False
@@ -171,6 +178,34 @@ def _collage(ctx: Context) -> Image.Image:
         ctx.layout,
         ctx.margin,
     )
+
+
+def _collage_regions(ctx: Context) -> list[tuple[str, tuple[int, int, int, int]]]:
+    return collage_regions(
+        gather_entries(
+            ctx.source,
+            ctx.images_dir,
+            ctx.style,
+            ctx.picks,
+            ctx.lookback_hours,
+            ctx.species_limit,
+            ctx.ranking,
+        ),
+        ctx.resolution,
+        ctx.show_names,
+        ctx.font_key,
+        ctx.label_size,
+        ctx.namer.label,
+        ctx.layout,
+        ctx.margin,
+    )
+
+
+def _whole_page(ctx: Context) -> list[tuple[str, tuple[int, int, int, int]]]:
+    """A plate is one bird on a page of its own, so the page is its region -
+    no need to ask render/plate.py where it put the drawing."""
+    names = mode_of(ctx.mode).subjects(ctx)
+    return [(names[0], (0, 0, *ctx.resolution))] if names else []
 
 
 def _holder(ctx: Context) -> tuple[str, datetime] | None:
@@ -252,14 +287,28 @@ def _collage_subjects(ctx: Context) -> list[str]:
 
 # Insertion order is the order button A walks.
 MODES: dict[str, Mode] = {
-    "collage": Mode("Collage (default)", _collage, _collage_key, _collage_subjects, windowed=True),
+    "collage": Mode(
+        "Collage (default)",
+        _collage,
+        _collage_key,
+        _collage_subjects,
+        _collage_regions,
+        windowed=True,
+    ),
     "latest": Mode(
         "Latest bird",
         _latest_page,
         _latest_key,
         lambda ctx: [h[0]] if (h := _holder(ctx)) else [],
+        _whole_page,
     ),
-    "arrival": Mode("Newest arrival", _arrival_page, _arrival_key, lambda ctx: _one(_arrival(ctx))),
+    "arrival": Mode(
+        "Newest arrival",
+        _arrival_page,
+        _arrival_key,
+        lambda ctx: _one(_arrival(ctx)),
+        _whole_page,
+    ),
 }
 
 DEFAULT_MODE = "collage"
@@ -301,6 +350,22 @@ def render(ctx: Context) -> Image.Image:
 def subjects(ctx: Context) -> list[str]:
     """The species the current page is about."""
     return mode_of(ctx.mode).subjects(ctx)
+
+
+_regions: tuple[tuple, list[tuple[str, tuple[int, int, int, int]]]] | None = None
+_regions_lock = threading.Lock()
+
+
+def regions(ctx: Context) -> list[tuple[str, tuple[int, int, int, int]]]:
+    """Where each bird on the page landed. Cached on the state key like
+    `png_bytes`, for the same reason: a room of pointers must not each repack."""
+    global _regions
+    with _regions_lock:
+        key = state_key(ctx)
+        if _regions is not None and _regions[0] == key:
+            return _regions[1]
+        _regions = (key, mode_of(ctx.mode).regions(ctx))
+        return _regions[1]
 
 
 _cache: tuple[tuple, bytes] | None = None

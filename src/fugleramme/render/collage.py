@@ -77,16 +77,24 @@ _OVERLAP_PX = 4  # erode the collision mask slightly so birds nestle into
 _ATTEMPTS = 20
 
 
+def _scaled_size(size: tuple[int, int], max_dim: int) -> tuple[int, int]:
+    """What `_scaled` will make of a sprite this size. Split out so `regions` can
+    measure a bird without resizing it, and cannot drift from what is drawn."""
+    width, height = size
+    scale = max_dim / max(width, height)
+    if scale == 1.0:
+        return width, height
+    return max(1, round(width * scale)), max(1, round(height * scale))
+
+
 def _scaled(img: Image.Image, max_dim: int, flip: bool) -> Image.Image:
     """Scale a trimmed sprite to max_dim on its longest side, optionally mirroring
     it. Mirroring (not rotation) adds variety while keeping any ground or water
     level. Takes the alpha channel alone when packing, the whole plate to draw."""
-    scale = max_dim / max(img.width, img.height)
-    if scale != 1.0:
-        img = img.resize(
-            (max(1, round(img.width * scale)), max(1, round(img.height * scale))),
-            Image.Resampling.LANCZOS,
-        )
+    # On the scale, not the rounded size: a resample that rounds back to the same
+    # size is still a resample, and skipping it would move pixels.
+    if max_dim / max(img.width, img.height) != 1.0:
+        img = img.resize(_scaled_size(img.size, max_dim), Image.Resampling.LANCZOS)
     return img.transpose(Image.Transpose.FLIP_LEFT_RIGHT) if flip else img
 
 
@@ -317,33 +325,47 @@ def _placements(
         return result
 
 
-def render_collage(
+@dataclass(frozen=True, eq=False)  # eq: a generated __eq__ would raise on the images
+class _Page:
+    """A packed collage before any pixels: what goes where, and the pack-to-output
+    scale that takes it there. Shared by the draw pass and `regions`, so a hover
+    box can never name a place the bird is not."""
+
+    names: list[str]
+    arts: list[Image.Image]
+    flips: list[bool]
+    scale: float
+    placed: tuple[_Placed, ...]
+    used_px: int
+
+    def art_box(self, p: _Placed) -> tuple[int, int, int, int]:
+        """One bird's rectangle in output pixels, label included when it has one."""
+        width, height = _scaled_size(self.arts[p.index].size, max(1, round(p.dim * self.scale)))
+        x, y = _at(p.at, self.scale)
+        box = (x, y, x + width, y + height)
+        if p.label_at is None or not self.used_px:
+            return box
+        # The name sits below the bird and may hang off either side of it.
+        lx, ly = _at(p.label_at, self.scale)
+        lw = round(p.label_w * self.scale)
+        lh = max(1, round(self.used_px * self.scale))
+        return (min(box[0], lx), box[1], max(box[2], lx + lw), max(box[3], ly + lh))
+
+
+def _page(
     entries: list[tuple[str, Path | None]],
-    resolution: tuple[int, int] = DEFAULT_RESOLUTION,
-    show_names: bool = True,
-    textured: bool = True,
-    font_key: str = fonts.DEFAULT_FONT,
-    label_size: str = fonts.DEFAULT_LABEL_SIZE,
-    label_text: Callable[[str], str] = str,
-    perches: Sequence[Path] = (),
-    layout: str = packing.DEFAULT_LAYOUT,
-    margin: float = DEFAULT_MARGIN,
-) -> Image.Image:
-    """Composite the given (name, image) entries into a tightly packed collage.
-
-    textured: paper grain for the web, flat paper for the panel, whose dither
-    would otherwise turn the grain into noise. It also picks the label ink.
-    label_text: scientific name -> what the label reads; str leaves it alone.
-    perches: the active style's bare branches, for a page with no birds on it.
-    layout: how the birds are packed (packing.LAYOUTS).
-    margin: bare paper along the edge, as a fraction of the short side.
-    """
-    canvas = blank(resolution, textured)
-
+    resolution: tuple[int, int],
+    show_names: bool,
+    font_key: str,
+    label_size: str,
+    label_text: Callable[[str], str],
+    layout: str,
+    margin: float,
+) -> _Page | None:
+    """Pack the page, or None when nothing on it can be drawn."""
     kept = [(name, path) for name, path in entries if path is not None]
     if not kept:
-        draw_perch(canvas, perches, day_ordinal(), textured)
-        return canvas
+        return None
     arts = [trim(path) for _, path in kept]
 
     # Pack pixels from here down; `scale` takes them to the output.
@@ -377,9 +399,39 @@ def render_collage(
         layout,
         margin,
     )
+    return _Page(names, arts, flips, scale, placed, used_px)
 
-    for p in placed:
-        art = _scaled(arts[p.index], max(1, round(p.dim * scale)), flips[p.index])
+
+def render_collage(
+    entries: list[tuple[str, Path | None]],
+    resolution: tuple[int, int] = DEFAULT_RESOLUTION,
+    show_names: bool = True,
+    textured: bool = True,
+    font_key: str = fonts.DEFAULT_FONT,
+    label_size: str = fonts.DEFAULT_LABEL_SIZE,
+    label_text: Callable[[str], str] = str,
+    perches: Sequence[Path] = (),
+    layout: str = packing.DEFAULT_LAYOUT,
+    margin: float = DEFAULT_MARGIN,
+) -> Image.Image:
+    """Composite the given (name, image) entries into a tightly packed collage.
+
+    textured: paper grain for the web, flat paper for the panel, whose dither
+    would otherwise turn the grain into noise. It also picks the label ink.
+    label_text: scientific name -> what the label reads; str leaves it alone.
+    perches: the active style's bare branches, for a page with no birds on it.
+    layout: how the birds are packed (packing.LAYOUTS).
+    margin: bare paper along the edge, as a fraction of the short side.
+    """
+    canvas = blank(resolution, textured)
+    page = _page(entries, resolution, show_names, font_key, label_size, label_text, layout, margin)
+    if page is None:
+        draw_perch(canvas, perches, day_ordinal(), textured)
+        return canvas
+
+    scale = page.scale
+    for p in page.placed:
+        art = _scaled(page.arts[p.index], max(1, round(p.dim * scale)), page.flips[p.index])
         at = _at(p.at, scale)
         origin = (at[0] - PAD, at[1] - PAD)
         proc = process_sprite(art, origin, textured=textured)
@@ -387,17 +439,41 @@ def render_collage(
 
     # Names last: halos feather past the collision mask, so a name drawn inline
     # with the birds would be washed over by the next neighbour.
-    if used_px:
-        font = fonts.load(font_key, max(1, round(used_px * scale)))
-        for p in placed:
+    if page.used_px:
+        font = fonts.load(font_key, max(1, round(page.used_px * scale)))
+        for p in page.placed:
             if p.label_at is None:
                 continue
-            mask = text_mask(label_text(names[p.index]), font, not textured)
+            mask = text_mask(label_text(page.names[p.index]), font, not textured)
             at = _at(p.label_at, scale)
             centred = at[0] + round((p.label_w * scale - mask.width) / 2)
             stamp(canvas, mask, (centred, at[1]), textured)
 
     return canvas
+
+
+def regions(
+    entries: list[tuple[str, Path | None]],
+    resolution: tuple[int, int] = DEFAULT_RESOLUTION,
+    show_names: bool = True,
+    font_key: str = fonts.DEFAULT_FONT,
+    label_size: str = fonts.DEFAULT_LABEL_SIZE,
+    label_text: Callable[[str], str] = str,
+    layout: str = packing.DEFAULT_LAYOUT,
+    margin: float = DEFAULT_MARGIN,
+) -> list[tuple[str, tuple[int, int, int, int]]]:
+    """Each drawn bird's `(name, (x0, y0, x1, y1))` in output pixels, in draw
+    order, so a caller hit-testing a point walks it backwards.
+
+    For the kiosk's hover (#54); the panel has nothing to point at. The packing
+    is the cached one, so asking for the boxes of a page already rendered packs
+    nothing. A box is the sprite's whole rectangle, transparent corners and all:
+    testing the alpha would be exact, and worse to aim at.
+    """
+    page = _page(entries, resolution, show_names, font_key, label_size, label_text, layout, margin)
+    if page is None:
+        return []
+    return [(page.names[p.index], page.art_box(p)) for p in page.placed]
 
 
 def _at(at: tuple[int, int], scale: float) -> tuple[int, int]:

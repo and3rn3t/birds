@@ -89,6 +89,7 @@ def _post(url: str, fields: dict, headers: dict | None = None):
         ("/collage.png", "image/png"),
         ("/preview.png", "image/png"),
         ("/state", "application/json"),
+        ("/regions", "application/json"),
         ("/species", "application/json"),
         ("/update", "application/json"),
         ("/health", "text/plain"),
@@ -155,6 +156,26 @@ def test_no_password_leaves_every_route_open(frame):
     """Today's behaviour, and what an updated Pi must wake up to."""
     for route in ("/admin", "/preview.png", "/species", "/update"):
         assert _fetch(frame + route)[0] == 200
+
+
+def test_the_kiosk_gets_hover_boxes_under_the_token_it_polled(frame):
+    """A kiosk holding boxes for an older page has to know they went stale."""
+    body = json.loads(_fetch(frame + "/regions")[2])
+    assert body["token"] == json.loads(_fetch(frame + "/state")[2])["token"]
+
+    width, height = body["size"]
+    assert body["birds"]
+    for bird in body["birds"]:
+        x0, y0, x1, y1 = bird["box"]
+        assert 0 <= x0 < x1 <= width
+        assert 0 <= y0 < y1 <= height
+        assert bird["label"] and bird["name"]
+        assert bird["plate"]  # the fixture's birds all come off a style folder
+
+
+def test_the_hover_boxes_stay_open_behind_an_admin_password(locked):
+    """Whoever can see the birds may point at one; the password is the admin's."""
+    assert _fetch(locked + "/regions")[0] == 200
 
 
 def test_an_unknown_route_is_a_404(frame):

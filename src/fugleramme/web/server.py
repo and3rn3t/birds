@@ -229,6 +229,38 @@ def make_handler(
                 JSON,
             )
 
+        def _regions(self):
+            """Where each bird on the page is, for the kiosk's hover (#54).
+
+            Carries the same token as /state, so a kiosk holding boxes for an
+            older page knows to drop them. A kiosk route: open even with an
+            admin password set, since whoever can see the birds may point at one.
+            """
+            ctx = self._context(store.get())
+            # Which plate a bird was cut from is already built for the admin's
+            # listing; a species the page could not draw has no box, so it
+            # falls out of the join on its own.
+            plates = {name: style for name, style, _url in admin.subjects(ctx)}
+            self._send(
+                200,
+                json.dumps(
+                    {
+                        "token": modes.token(modes.state_key(ctx)),
+                        "size": list(ctx.resolution),
+                        "birds": [
+                            {
+                                "name": name,
+                                "label": ctx.namer.label(name),
+                                "box": list(box),
+                                "plate": plates.get(name),
+                            }
+                            for name, box in modes.regions(ctx)
+                        ],
+                    }
+                ).encode(),
+                JSON,
+            )
+
         def _species(self):
             ctx = self._context(self._edited())
             rows = admin.subjects(ctx)
@@ -276,6 +308,7 @@ def make_handler(
             "/collage.png": _page_png,
             "/preview.png": _preview_png,
             "/state": _state,
+            "/regions": _regions,
             "/paper.png": _paper,
             "/species": _species,
             "/admin": _admin,

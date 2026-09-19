@@ -8,7 +8,7 @@ import signal
 import pytest
 from PIL import Image
 
-from fugleramme import fake, languages
+from fugleramme import fake, languages, modes
 from fugleramme.api import ApiSource
 from fugleramme.render import collage
 
@@ -31,9 +31,11 @@ def _restore_signal_handlers():
 
 
 @pytest.fixture(autouse=True)
-def _no_cached_layouts():
-    """A module global, so one test's packing must not answer for the next."""
+def _no_cached_layouts(monkeypatch):
+    """Module globals, so one test's packing must not answer for the next."""
     collage._layouts.clear()
+    monkeypatch.setattr(modes, "_cache", None)
+    monkeypatch.setattr(modes, "_regions", None)
 
 
 @pytest.fixture

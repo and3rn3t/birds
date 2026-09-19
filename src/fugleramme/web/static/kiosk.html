@@ -25,7 +25,15 @@
   #chrome a { color: #6d6a62; text-decoration: none; }
   #chrome a:hover, #chrome a:focus { color: #2e2c28; text-decoration: underline; }
   /* Reduced motion: still out of the way, just without the fade. */
-  .still #chrome { transition: none; }
+  .still #chrome, .still #card { transition: none; }
+  /* Who that bird is, for whoever is standing at the frame. Follows the pointer,
+     so it is placed from script; only its look is here. */
+  #card { position: fixed; left: 0; top: 0; max-width: 16rem; padding: .5rem .7rem; border-radius: .4rem; background: #f2ede2; border: 1px solid #ddd6c6; font: .85rem/1.35 system-ui, sans-serif; color: #2e2c28; opacity: 0; pointer-events: none; transition: opacity .2s ease-in-out; }
+  #card.up { opacity: 1; }
+  #card b { font-weight: 600; font-style: italic; }
+  #card small { display: block; margin-top: .2rem; color: #6d6a62; font-style: normal; }
+  /* Only where there is a bird to point at, so bare paper still reads as paper. */
+  #collage.pointing { cursor: pointer; }
 </style>
 </head>
 <body>
@@ -38,6 +46,7 @@
   <a id="birdnet" href="/admin">BirdNET-Go</a>
   <a id="docs" href="/admin">Help</a>
 </nav>
+<div id="card" role="status"></div>
 <noscript><p>Fugleramme needs JavaScript to run in a browser.</p></noscript>
 <script>
   const DELAY = 5000;  // /state is one query, no render
@@ -98,6 +107,67 @@
       : state.birdnetUrl;
     document.getElementById("docs").href = state.docsUrl;
   };
+  // Point at a bird to read who it is (#54). The boxes come from the same
+  // packing the page was drawn with, in the image's own pixels.
+  const card = document.getElementById("card");
+  let birds = [];
+  let held = null;  // the bird the card is open on
+  const hide = () => { card.classList.remove("up"); held = null; };
+
+  // The image is object-fit: contain, so it sits letterboxed inside its own box.
+  const toImage = (event) => {
+    const box = collage.getBoundingClientRect();
+    if (!collage.naturalWidth || !box.width) return null;
+    const scale = Math.min(box.width / collage.naturalWidth, box.height / collage.naturalHeight);
+    return {
+      x: (event.clientX - box.left - (box.width - collage.naturalWidth * scale) / 2) / scale,
+      y: (event.clientY - box.top - (box.height - collage.naturalHeight * scale) / 2) / scale,
+    };
+  };
+
+  // Backwards: the packer draws biggest-first, so a later bird is the one on top.
+  const under = (at) => {
+    for (let i = birds.length - 1; i >= 0; i--) {
+      const [x0, y0, x1, y1] = birds[i].box;
+      if (at.x >= x0 && at.x < x1 && at.y >= y0 && at.y < y1) return birds[i];
+    }
+    return null;
+  };
+
+  const MARGIN = 12;
+  const place = (event) => {
+    // Flip to the other side rather than run off the edge.
+    const box = card.getBoundingClientRect();
+    const x = event.clientX + MARGIN + box.width > innerWidth ? event.clientX - MARGIN - box.width : event.clientX + MARGIN;
+    const y = event.clientY + MARGIN + box.height > innerHeight ? event.clientY - MARGIN - box.height : event.clientY + MARGIN;
+    card.style.transform = "translate(" + Math.max(0, x) + "px," + Math.max(0, y) + "px)";
+  };
+
+  const point = (event) => {
+    const at = toImage(event);
+    const bird = at && under(at);
+    collage.classList.toggle("pointing", !!bird);
+    if (!bird) return hide();
+    if (bird !== held) {
+      held = bird;
+      card.innerHTML = "";
+      const name = document.createElement("b");
+      name.textContent = bird.label;
+      card.append(name);
+      if (bird.plate) {
+        const note = document.createElement("small");
+        note.textContent = bird.plate;
+        card.append(note);
+      }
+    }
+    place(event);
+    card.classList.add("up");
+  };
+  addEventListener("pointermove", point);
+  addEventListener("pointerdown", (e) => { if (e.pointerType !== "mouse") point(e); });
+  addEventListener("keydown", (e) => { if (e.key === "Escape") hide(); });
+  addEventListener("blur", hide);
+
   let token = null;
   async function tick() {
     try {
@@ -105,9 +175,13 @@
       links(state);
       if (state.token !== token) {
         token = state.token;
+        hide();
+        birds = [];  // stale the moment the page changes
         const next = new Image();  // decode before swapping, so the frame never blanks
         next.onload = () => swap(next);
         next.src = "/collage.png?v=" + encodeURIComponent(token);
+        const found = await (await fetch("/regions?v=" + encodeURIComponent(token), {cache: "no-store"})).json();
+        if (found.token === token) birds = found.birds;  // else the page moved again
       }
     } catch (e) {}  // transient: retry next tick
     setTimeout(tick, DELAY);
