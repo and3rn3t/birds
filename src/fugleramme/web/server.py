@@ -5,7 +5,7 @@ showing, full-screen. It never reloads; instead it polls `/state` and swaps the
 image only when the page actually changed, so a new bird appears within one poll
 interval with no flash. Presentation settings live at `/admin` and are read per
 request from the shared SettingsStore, so a change takes effect without a
-restart. No auth: both views are open on the LAN.
+restart. The kiosk is always open; the admin can be given a password (#52).
 
 Routing and transport only - the admin page itself is built in admin.py, and the
 files under static/ are served as they are.
@@ -21,8 +21,11 @@ and the kiosk keeps the picture it is holding.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import functools
 import hashlib
+import hmac
 import io
 import json
 import logging
@@ -32,7 +35,7 @@ from pathlib import Path
 from typing import ClassVar
 from urllib.parse import parse_qs, urlparse
 
-from .. import __version__, modes, updates
+from .. import __version__, auth, modes, updates
 from ..config import DOCS_URL
 from ..languages import namer
 from ..panel import Panel, resolution_of
@@ -57,6 +60,27 @@ FILES = {
     "/admin.css": ("admin.css", "text/css; charset=utf-8"),
     "/admin.js": ("admin.js", "text/javascript; charset=utf-8"),
 }
+
+
+# What an admin password covers. Named rather than inferred, so a route added
+# later is public only if someone put it on the open side on purpose. The kiosk
+# and its poll stay out: a frame with a password still shows birds, and an
+# uptime probe on /health still answers.
+PROTECTED = frozenset({"/admin", "/preview.png", "/species", "/detector", "/update"})
+
+REALM = "Fugleramme"
+
+
+def credentials(header: str) -> tuple[str, str] | None:
+    """The user and password out of an `Authorization: Basic` header."""
+    scheme, _, encoded = header.partition(" ")
+    if scheme.lower() != "basic":
+        return None
+    try:
+        user, sep, password = base64.b64decode(encoded, validate=True).decode().partition(":")
+    except (binascii.Error, UnicodeDecodeError):
+        return None
+    return (user, password) if sep else None
 
 
 @functools.cache
@@ -132,6 +156,24 @@ def make_handler(
         def _body(self, body: bytes):
             if not self.head:
                 self.wfile.write(body)
+
+        def _authorized(self, route: str) -> bool:
+            settings = store.get()
+            if route not in PROTECTED or not settings.admin_password_hash:
+                return True
+            given = credentials(self.headers.get("Authorization", ""))
+            if given is None:
+                return False
+            return hmac.compare_digest(given[0], settings.admin_username) and auth.verify(
+                settings.admin_password_hash, given[1]
+            )
+
+        def _unauthorized(self):
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", f'Basic realm="{REALM}"')
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
 
         def _query(self) -> dict[str, list[str]]:
             return parse_qs(urlparse(self.path).query, keep_blank_values=True)
@@ -243,7 +285,9 @@ def make_handler(
 
         def do_GET(self):
             route = urlparse(self.path).path
-            if route in FILES:
+            if not self._authorized(route):
+                self._unauthorized()
+            elif route in FILES:
                 name, content_type = FILES[route]
                 self._send_cached((STATIC_DIR / name).read_bytes(), content_type)
             elif route in self.ROUTES:
@@ -267,6 +311,10 @@ def make_handler(
             # keep_blank_values: an emptied field is a change, not an absent one.
             # "None" for the second language and a cleared credential both post blank.
             form = parse_qs(self.rfile.read(length).decode(), keep_blank_values=True)
+            # After the body: a 401 over an unread request body strands the client.
+            if not self._authorized(route):
+                self._unauthorized()
+                return
             # POST, not a query: the connection test carries a password.
             if route == "/detector":
                 answer = admin.connection(form, store.get())

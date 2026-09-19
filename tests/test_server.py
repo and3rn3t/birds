@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
@@ -14,12 +15,12 @@ from http.server import ThreadingHTTPServer
 import pytest
 from PIL import Image
 
-from fugleramme import api
+from fugleramme import api, auth
 from fugleramme.api import ApiSource
 from fugleramme.picks import Picks
 from fugleramme.settings import Settings, SettingsStore
 from fugleramme.status import Status
-from fugleramme.web import server
+from fugleramme.web import admin, server
 
 SETTINGS = "s.json"
 
@@ -67,6 +68,16 @@ def _fetch(url: str, method: str = "GET", headers: dict | None = None):
         return error.status, dict(error.headers), error.read()
 
 
+def _post(url: str, fields: dict, headers: dict | None = None):
+    body = urllib.parse.urlencode(fields).encode()
+    request = urllib.request.Request(url, data=body, method="POST", headers=headers or {})
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, dict(response.headers), response.read()
+    except urllib.error.HTTPError as error:
+        return error.status, dict(error.headers), error.read()
+
+
 @pytest.mark.parametrize(
     "route,content_type",
     [
@@ -88,6 +99,62 @@ def test_every_route_answers_with_what_it_promises(frame, route, content_type):
     assert status == 200
     assert headers["Content-Type"] == content_type
     assert len(body) == int(headers["Content-Length"]) > 0
+
+
+@pytest.fixture
+def locked(tmp_path, source):
+    """A frame whose admin carries a password."""
+    store = SettingsStore(tmp_path / SETTINGS)
+    store.update(admin_password_hash=auth.hash_password("hunter2"))
+    yield from _serve(tmp_path, source(count=40, seed=0), store)
+
+
+def _basic(user: str, password: str) -> dict:
+    token = base64.b64encode(f"{user}:{password}".encode()).decode()
+    return {"Authorization": "Basic " + token}
+
+
+@pytest.mark.parametrize("route", ["/admin", "/preview.png", "/species", "/update"])
+def test_a_password_closes_the_admin_surface(locked, route):
+    status, headers, _body = _fetch(locked + route)
+    assert status == 401
+    assert headers["WWW-Authenticate"] == 'Basic realm="Fugleramme"'
+    assert _fetch(locked + route, headers=_basic("admin", "hunter2"))[0] == 200
+    assert _fetch(locked + route, headers=_basic("admin", "wrong"))[0] == 401
+    assert _fetch(locked + route, headers=_basic("someone", "hunter2"))[0] == 401
+
+
+@pytest.mark.parametrize("route", ["/", "/admin.js", "/collage.png", "/state", "/health"])
+def test_a_password_leaves_the_kiosk_open(locked, route):
+    """The frame on the wall keeps showing birds to a room that has no password."""
+    assert _fetch(locked + route)[0] == 200
+
+
+def test_saving_settings_needs_the_password_too(locked):
+    assert _post(locked + "/admin", {"rotation": "90"})[0] == 401
+
+
+def test_the_admin_form_sets_and_clears_its_own_password(frame, tmp_path):
+    """The form posts a password; only its hash is ever stored, and posting the
+    placeholder back leaves that hash alone."""
+    store = SettingsStore(tmp_path / SETTINGS)
+
+    _post(frame + "/admin", {"admin_password": "hunter2"})
+    stored = store.get().admin_password_hash
+    assert stored and "hunter2" not in stored
+    assert auth.verify(stored, "hunter2")
+
+    _post(frame + "/admin", {"admin_password": admin.PASSWORD_SET}, _basic("admin", "hunter2"))
+    assert store.get().admin_password_hash == stored
+
+    _post(frame + "/admin", {"admin_password": ""}, _basic("admin", "hunter2"))
+    assert store.get().admin_password_hash == ""
+
+
+def test_no_password_leaves_every_route_open(frame):
+    """Today's behaviour, and what an updated Pi must wake up to."""
+    for route in ("/admin", "/preview.png", "/species", "/update"):
+        assert _fetch(frame + route)[0] == 200
 
 
 def test_an_unknown_route_is_a_404(frame):

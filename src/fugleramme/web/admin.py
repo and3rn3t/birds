@@ -14,7 +14,7 @@ from pathlib import Path
 from string import Template
 from urllib.parse import urlparse
 
-from .. import __version__, modes, updates
+from .. import __version__, auth, modes, updates
 from ..api import probe
 from ..config import BIRDNET_PORT, DOCS_URL, WEB_HEIGHTS
 from ..languages import NONE, Namer, catalog, catalog_failure, ordered
@@ -40,8 +40,9 @@ from . import STATIC_DIR, hostinfo
 
 CHECKBOXES = "checkboxes"  # hidden field naming the checkboxes a form carries
 
-# The stored detector password never reaches the page; posting this back
-# unchanged means "leave it alone".
+# A stored password never reaches the page; posting this back unchanged means
+# "leave it alone". The admin's own password is only ever stored as a hash, so
+# for that one there is nothing to echo even if we wanted to.
 PASSWORD_SET = "\u2022" * 8
 
 _LOOPBACK = ("127.0.0.1", "localhost", "::1", "0.0.0.0")
@@ -69,6 +70,11 @@ def form_changes(form: dict[str, list[str]]) -> dict:
         changes["species_limit"] = NO_LIMIT  # the box is disabled, so it posts nothing
     if changes.get("detector_password") == PASSWORD_SET:
         del changes["detector_password"]  # untouched, so the stored one stands
+    if "admin_password" in changes:
+        # The form asks for a password; Settings only ever holds its hash.
+        given = str(changes.pop("admin_password"))
+        if given != PASSWORD_SET:
+            changes["admin_password_hash"] = auth.hash_password(given) if given else ""
     return changes
 
 
@@ -305,6 +311,23 @@ def _detector_field(settings: Settings) -> str:
     )
 
 
+def _access_field(settings: Settings) -> str:
+    """The optional password on the admin (#52). Blank means no password, which
+    is how the frame behaved before this existed - so an updated Pi is open
+    until someone chooses otherwise. Emptying a set field opens it again."""
+    return _text_field(
+        "admin_password",
+        "Admin password",
+        PASSWORD_SET if settings.admin_password_hash else "",
+        "password",
+        "blank for none",
+    ) + (
+        '<p class="note">Covers the admin only - the kiosk stays open, so the frame '
+        "still shows its birds. The password is sent in the clear over plain HTTP: "
+        "a frame reachable from beyond the LAN wants a reverse proxy doing TLS.</p>"
+    )
+
+
 def birdnet_link(url: str) -> tuple[str, int | None]:
     """The nav link to BirdNET-Go: (address, port to substitute this page's host
     on). A loopback address is loopback from the Pi only, so a remote browser
@@ -471,6 +494,7 @@ def page(
         panel=f"detected · {glass}" if detected else f"not detected · assuming {glass}",
         birdnet=_detector(detector_state, detector_version, rows is not None, names_failure),
         detector_field=_detector_field(settings),
+        access_field=_access_field(settings),
         host=hostinfo.lan_address(updates.in_container()),
         online=_state(online, "online", "offline") + (f" · {iface}" if iface else ""),
         disk=hostinfo.disk_free(names_dir),

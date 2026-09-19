@@ -70,6 +70,12 @@ REFRESH_OPTIONS = (
 MARGIN_CEILING = 25
 
 
+# Who the admin's password belongs to. Offered as a setting only so a frame can
+# be put behind a proxy that expects a particular name; the admin UI asks for
+# the password alone.
+DEFAULT_ADMIN_USERNAME = "admin"
+
+
 def lookback_order(hours: float) -> float:
     """Sort key: ALL_TIME is the longest window, not the shortest."""
     return float("inf") if hours == ALL_TIME else hours
@@ -108,6 +114,10 @@ class Settings:
     detector_url: str = DEFAULT_DETECTOR_URL
     detector_username: str = ""
     detector_password: str = ""
+    # Optional password on the admin (#52). An empty hash is an open admin, which
+    # is how every frame behaved before this, so an updated Pi is unchanged.
+    admin_username: str = DEFAULT_ADMIN_USERNAME
+    admin_password_hash: str = ""
 
     def oriented(self, resolution: tuple[int, int]) -> tuple[int, int]:
         """Apply the rotation's aspect to a landscape-native (w, h)."""
@@ -222,6 +232,9 @@ def _coerce(raw: dict, base: Settings | None = None) -> Settings:
         detector_url=_url(raw.get("detector_url"), d.detector_url),
         detector_username=_text(raw.get("detector_username"), d.detector_username),
         detector_password=_text(raw.get("detector_password"), d.detector_password),
+        # A hash with no name to go with it would lock the admin out of itself.
+        admin_username=_text(raw.get("admin_username"), d.admin_username) or DEFAULT_ADMIN_USERNAME,
+        admin_password_hash=_text(raw.get("admin_password_hash"), d.admin_password_hash),
     )
 
 
