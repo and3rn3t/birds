@@ -33,6 +33,7 @@ from typing import ClassVar
 from urllib.parse import parse_qs, urlparse
 
 from .. import __version__, modes, updates
+from ..config import DOCS_URL
 from ..languages import namer
 from ..panel import Panel, resolution_of
 from ..picks import Picks
@@ -168,8 +169,23 @@ def make_handler(
 
         def _state(self):
             # Cheap enough to poll: one grouped query, no render.
-            token = modes.token(modes.state_key(self._context(store.get())))
-            self._send(200, json.dumps({"token": token}).encode(), JSON)
+            settings = store.get()
+            token = modes.token(modes.state_key(self._context(settings)))
+            # The kiosk's chrome links out to the detector, and the address can
+            # change under it, so it rides the poll rather than page load.
+            birdnet_url, birdnet_port = admin.birdnet_link(settings.detector_url)
+            self._send(
+                200,
+                json.dumps(
+                    {
+                        "token": token,
+                        "birdnetUrl": birdnet_url,
+                        "birdnetPort": birdnet_port,
+                        "docsUrl": DOCS_URL,
+                    }
+                ).encode(),
+                JSON,
+            )
 
         def _species(self):
             ctx = self._context(self._edited())

@@ -19,6 +19,13 @@
   @keyframes in { from { opacity: 0; } }
   p { font: 1rem/1.5 system-ui, sans-serif; color: #8a8880; text-align: center; }
   p a { color: inherit; }
+  /* Chrome for whoever is standing at the frame; a still room gets the birds back. */
+  #chrome { position: fixed; right: 1rem; bottom: 1rem; display: flex; gap: 1rem; padding: .5rem .9rem; border-radius: 999px; background: #f2ede2; border: 1px solid #ddd6c6; font: .8rem/1 system-ui, sans-serif; opacity: 0; pointer-events: none; transition: opacity .4s ease-in-out; }
+  #chrome.up { opacity: 1; pointer-events: auto; }
+  #chrome a { color: #6d6a62; text-decoration: none; }
+  #chrome a:hover, #chrome a:focus { color: #2e2c28; text-decoration: underline; }
+  /* Reduced motion: still out of the way, just without the fade. */
+  .still #chrome { transition: none; }
 </style>
 </head>
 <body>
@@ -26,6 +33,11 @@
 <img id="collage" src="/collage.png" alt="Birds seen recently" hidden>
 <p id="waiting" hidden>Waiting for BirdNET-Go<br><a href="/admin">Configure it in the admin panel</a></p>
 <div id="over"></div>
+<nav id="chrome">
+  <a href="/admin">Admin</a>
+  <a id="birdnet" href="/admin">BirdNET-Go</a>
+  <a id="docs" href="/admin">Help</a>
+</nav>
 <noscript><p>Fugleramme needs JavaScript to run in a browser.</p></noscript>
 <script>
   const DELAY = 5000;  // /state is one query, no render
@@ -67,10 +79,30 @@
     next.onanimationend = () => { collage.src = next.src; collage.decode().finally(() => next.remove()); };
     over.append(next);
   };
+  const chrome = document.getElementById("chrome");
+  const IDLE = 3000;
+  let idle = null;
+  const wake = () => {
+    chrome.classList.add("up");
+    clearTimeout(idle);
+    idle = setTimeout(() => chrome.classList.remove("up"), IDLE);
+  };
+  if (calm.matches) document.body.classList.add("still");
+  addEventListener("pointermove", wake);
+  addEventListener("touchstart", wake, {passive: true});
+  chrome.addEventListener("focusin", wake);  // hidden is still tabbable
+  // Re-read every poll: the admin can point the frame at another detector.
+  const links = (state) => {
+    document.getElementById("birdnet").href = state.birdnetPort
+      ? location.protocol + "//" + location.hostname + ":" + state.birdnetPort + "/"
+      : state.birdnetUrl;
+    document.getElementById("docs").href = state.docsUrl;
+  };
   let token = null;
   async function tick() {
     try {
       const state = await (await fetch("/state", {cache: "no-store"})).json();
+      links(state);
       if (state.token !== token) {
         token = state.token;
         const next = new Image();  // decode before swapping, so the frame never blanks

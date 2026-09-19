@@ -148,6 +148,15 @@ def test_the_preview_reads_an_unsaved_form_without_saving_it(frame, tmp_path):
     assert not (tmp_path / SETTINGS).exists()  # only a POST may write
 
 
+def test_the_state_carries_the_links_the_kiosk_chrome_needs(frame):
+    """The chrome bar links out to the detector, and the saved address can be
+    loopback-from-the-Pi, so the kiosk is told which port to graft its own host onto."""
+    state = json.loads(_fetch(frame + "/state")[2])
+    assert state["token"]
+    assert state["birdnetPort"] == 8090  # the default detector is loopback
+    assert state["docsUrl"].startswith("https://")
+
+
 def test_the_species_listing_marks_what_the_collage_cannot_draw(frame):
     body = json.loads(_fetch(frame + "/species")[2])
     assert 'class="noart"' in body["html"]
