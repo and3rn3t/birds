@@ -39,8 +39,10 @@ DEFAULT_DETECTOR_URL = f"http://127.0.0.1:{BIRDNET_PORT}"
 DOCS_URL = "https://arnegiacomo.dev/fugleramme/"
 
 # Self-update source. HTTPS, not the ssh origin: a service fetch has no agent.
-REPO_HTTPS_URL = "https://github.com/arnegiacomo/fugleramme.git"
-RELEASES_API = "https://api.github.com/repos/arnegiacomo/fugleramme/releases/latest"
+# This fork's own remote, not upstream's: `updates.apply` checks out the fetched
+# tag with --force, so pointing this at another repo discards local work.
+REPO_HTTPS_URL = "https://github.com/and3rn3t/birds.git"
+RELEASES_API = "https://api.github.com/repos/and3rn3t/birds/releases/latest"
 
 # Repo root: src/fugleramme/config.py -> repo root is three parents up.
 REPO_ROOT = Path(__file__).resolve().parents[2]
