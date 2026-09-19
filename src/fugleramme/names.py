@@ -31,6 +31,7 @@ hand has no manifest and simply has no provenance to show.
 from __future__ import annotations
 
 import json
+import math
 import re
 from pathlib import Path
 
@@ -257,6 +258,34 @@ def source_of(path: Path) -> str:
     """The work an image was cut from ("gould"), or "" if it is unlisted. This is
     the key ATTRIBUTION.md maps to terms, so it is what the admin page shows."""
     return record_of(path).get("source", "")
+
+
+# What a manifest scale may ask for. Bounds, so a typo takes neither the whole
+# page nor a corner of it.
+MIN_SCALE = 0.25
+MAX_SCALE = 4.0
+
+
+def scale_of(path: Path) -> float:
+    """How much bigger to draw this plate than its species' mass alone says, from
+    the manifest's optional "scale". 1.0 when it keeps none, which is every plate
+    cut before this existed.
+
+    A plate is scaled to its longest side, so one holding two birds - or one bird
+    in a lot of foliage - draws the bird itself small (#113). A scale above 1
+    gives that back without recutting the file.
+
+    Authoring-time only: `modes.state_key` is a function of the species set, not
+    of the manifest, so editing a scale does not repaint a running frame until
+    something else about the page moves.
+    """
+    try:
+        given = float(record_of(path).get("scale", ""))
+    except ValueError:
+        return 1.0
+    if not math.isfinite(given):
+        return 1.0
+    return min(MAX_SCALE, max(MIN_SCALE, given))
 
 
 def origin_of(path: Path) -> str:

@@ -33,7 +33,17 @@ from typing import NamedTuple
 import numpy as np
 from PIL import Image
 
-from fugleramme.names import BIRDS, MANIFEST, SUFFIXES, artwork_in, canonical, manifest, normalize
+from fugleramme.names import (
+    BIRDS,
+    MANIFEST,
+    MAX_SCALE,
+    MIN_SCALE,
+    SUFFIXES,
+    artwork_in,
+    canonical,
+    manifest,
+    normalize,
+)
 from fugleramme.render.paper import PAD, paper_texture, process_sprite
 
 REPO = Path(__file__).resolve().parents[1]
@@ -257,10 +267,12 @@ def prepare(path: Path, cap: int = CAP) -> Image.Image:
     return img
 
 
-def preview(img: Image.Image, out: Path, size: int = PREVIEW) -> None:
+def preview(img: Image.Image, out: Path, size: int = PREVIEW, plate: float = 1.0) -> None:
     """The bird on the frame's own paper, at the frame's own halo treatment - the
-    only honest look at whether the cut-out sits on the page."""
-    scale = size * _BIRD / max(img.size)
+    only honest look at whether the cut-out sits on the page. `plate` is the
+    manifest scale, so a cluttered plate is previewed at the size it will draw
+    at; one big enough to run off the square is a scale that crowds the page."""
+    scale = size * _BIRD * plate / max(img.size)
     scaled = img.resize(
         (max(1, round(img.width * scale)), max(1, round(img.height * scale))),
         Image.Resampling.LANCZOS,
@@ -323,6 +335,13 @@ def main() -> None:
     parser.add_argument("--preview", type=Path, help="also write the bird on paper, to this path")
     parser.add_argument("--cap", type=int, default=CAP, help=f"longest side, px (default {CAP})")
     parser.add_argument(
+        "--scale",
+        type=float,
+        default=1.0,
+        help="draw this plate bigger than its species' mass says, for a cut-out "
+        f"holding more than the one bird ({MIN_SCALE}-{MAX_SCALE}, default 1)",
+    )
+    parser.add_argument(
         "--dry-run", action="store_true", help="say what would happen, leave the style alone"
     )
     args = parser.parse_args()
@@ -332,6 +351,8 @@ def main() -> None:
     source = args.source.strip()
     if args.url and not source:
         sys.exit("--url needs a --source: a link with no work to name records nothing")
+    if not MIN_SCALE <= args.scale <= MAX_SCALE:
+        sys.exit(f"--scale is {MIN_SCALE} to {MAX_SCALE}; the frame clamps anything past that")
 
     style = choose_style(args.style)
     key = args.key or choose_species(labels(), args.species).key
@@ -341,6 +362,9 @@ def main() -> None:
         entry = {"source": source, "url": args.url} if args.url else {"source": source}
     else:
         entry = choose_source(manifest(style))
+    if args.scale != 1.0:
+        # A string like the rest of the record; `names.scale_of` reads it back.
+        entry = {**entry, "scale": f"{args.scale:g}"}
 
     img = prepare(args.image, args.cap)
     dest = birds / filename
@@ -350,7 +374,7 @@ def main() -> None:
     # Written on a dry run too: the point of the preview is deciding whether to
     # keep the cut-out, and it lands wherever you point it, not in the style.
     if args.preview:
-        preview(img, args.preview)
+        preview(img, args.preview, plate=args.scale)
         print(f"  preview: {args.preview}")
 
     if args.dry_run:

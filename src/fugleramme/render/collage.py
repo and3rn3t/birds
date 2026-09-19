@@ -33,7 +33,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageFilter
 
-from ..names import canonical, drawable_keys, image_for, normalize
+from ..names import canonical, drawable_keys, image_for, normalize, scale_of
 from ..picks import Picks
 from ..source import Source
 from . import fonts, packing
@@ -266,6 +266,7 @@ def _placements(
     key: tuple,
     arts: list[Image.Image],
     names: list[str],
+    scales: list[float],
     flips: list[bool],
     width: int,
     height: int,
@@ -286,7 +287,7 @@ def _placements(
 
         # Each bird's target size scales with its real mass (compressed); the whole
         # set then overshoots and shrinks until it fits the canvas, biggest first.
-        weights = _size_weights(names)
+        weights = [w * s for w, s in zip(_size_weights(names), scales, strict=True)]
         order = sorted(range(len(names)), key=lambda i: -weights[i])
         base = min(
             math.sqrt(width * height * 1.5 / sum(w * w for w in weights)),
@@ -367,6 +368,7 @@ def _page(
     if not kept:
         return None
     arts = [trim(path) for _, path in kept]
+    scales = [scale_of(path) for _, path in kept]
 
     # Pack pixels from here down; `scale` takes them to the output.
     scale = min(resolution) / _PACK_SHORT
@@ -377,7 +379,9 @@ def _page(
     name_px = label_px(width, height, label_size)
     labels = tuple(label_text(name) for name in names) if show_names else None
     key = (
-        tuple((name, str(path)) for name, path in kept),
+        # The scale rides the key: it lives in the manifest, which a style can be
+        # edited under a running frame, and the packing would not notice.
+        tuple((name, str(path), scale) for (name, path), scale in zip(kept, scales, strict=True)),
         width,
         height,
         font_key if show_names else None,
@@ -390,6 +394,7 @@ def _page(
         key,
         arts,
         names,
+        scales,
         flips,
         width,
         height,
