@@ -21,6 +21,8 @@ fugleramme-dev = "fugleramme.dev:main"
 fugleramme-fake-detector = "fugleramme.fake:main"
 # Whether a detector answers everything the frame needs. The fake or a real one.
 fugleramme-check = "fugleramme.check:main"
+# Birds this station hears that the style cannot draw: the plate-cutting queue.
+fugleramme-wanted = "fugleramme.wanted:main"
 
 [project.optional-dependencies]
 # Pi-only hardware. Not installed on the dev loop; the frame service
