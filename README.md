@@ -1,6 +1,14 @@
 # fugleramme
 E-ink bird frame for Raspberry Pi - real-time bird detection by audio, fully local AI, rendered as real, hand-cut 1800s bird illustrations.
 
+> [!IMPORTANT]
+> **This is a fork.** fugleramme is created and maintained by **[Arne Giacomo](https://arnegiacomo.dev)** at
+> **[arnegiacomo/fugleramme](https://github.com/arnegiacomo/fugleramme)** — the artwork, design and nearly all of the code are his.
+> This fork ([and3rn3t/birds](https://github.com/and3rn3t/birds)) carries a few local changes and points its self-update here;
+> the badges, docs, live demo, issues and Discussions below are upstream's. Please send bug reports and contributions upstream.
+>
+> [![Fork CI](https://github.com/and3rn3t/birds/actions/workflows/ci.yml/badge.svg)](https://github.com/and3rn3t/birds/actions/workflows/ci.yml)
+
 <p align="center">
   <img src="docs/assets/hero.jpg" width="520"
        alt="The frame on a kitchen windowsill showing six birds heard in the garden, a window feeder on the glass behind it">
